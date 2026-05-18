@@ -88,10 +88,15 @@ if [ -n "$CLAUDE_TOKEN" ]; then
     fi
   fi
 
-  # Skip the first-run onboarding wizard so the OAuth token takes effect immediately
+  # Skip the first-run onboarding wizard so the OAuth token takes effect immediately.
+  # Note: the marker file is ~/.claude.json (TOP-LEVEL home dir), not ~/.claude/.claude.json.
+  # The ~/.claude/ directory holds settings.json, backups/, cache/, etc — but the
+  # onboarding state lives one level up. (claude-work-setup.md's pattern of writing
+  # to <CLAUDE_CONFIG_DIR>/.claude.json works for a non-default config dir like
+  # ~/.claude-work, but with the default config dir the file is ~/.claude.json.)
   mkdir -p "$HOME/.claude"
-  [ -f "$HOME/.claude/.claude.json" ] || \
-    echo '{"hasCompletedOnboarding": true}' > "$HOME/.claude/.claude.json"
+  [ -f "$HOME/.claude.json" ] || \
+    echo '{"hasCompletedOnboarding": true}' > "$HOME/.claude.json"
 
   echo "Claude Code: token written to ~/.anthropic-work-key (600), auto-exported via .zshrc"
 fi
