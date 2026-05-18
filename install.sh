@@ -70,12 +70,21 @@ if [ -n "$CLAUDE_TOKEN" ]; then
   (umask 077; printf '%s\n' "$CLAUDE_TOKEN" > "$HOME/.anthropic-work-key")
 
   if ! command -v claude >/dev/null 2>&1; then
+    # If no npm and mise is present, install node globally via mise so npm is on
+    # PATH regardless of cwd. Per-repo `.mise.toml` only activates inside that repo,
+    # but install.sh typically runs from ~/dotfiles (e.g., VS Code dotfiles flow).
+    if ! command -v npm >/dev/null 2>&1 && command -v mise >/dev/null 2>&1; then
+      echo "Installing node@lts globally via mise (needed for claude-code)..."
+      mise use -g node@lts >/dev/null 2>&1 || true
+      eval "$(mise activate bash --shims)" 2>/dev/null || true
+    fi
+
     if command -v npm >/dev/null 2>&1; then
-      npm install -g @anthropic-ai/claude-code 2>/dev/null \
-        || sudo npm install -g @anthropic-ai/claude-code \
-        || echo "Warning: claude install failed (try manually: 'npm i -g @anthropic-ai/claude-code')"
+      npm install -g @anthropic-ai/claude-code \
+        || sudo -E env "PATH=$PATH" npm install -g @anthropic-ai/claude-code \
+        || echo "Warning: claude install failed (try: 'mise use -g node@lts && npm i -g @anthropic-ai/claude-code')"
     else
-      echo "Note: npm not found — token saved to ~/.anthropic-work-key; install claude later."
+      echo "Note: no npm available — token saved to ~/.anthropic-work-key; install claude manually."
     fi
   fi
 
