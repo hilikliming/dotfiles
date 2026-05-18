@@ -1,0 +1,26 @@
+# Portable Linux/dev-container aliases (no macOS-specific bits)
+
+# history/grep
+alias hg='history | grep'
+alias g='grep'
+
+# editor
+alias v='vim'
+
+# parent-dir navigation
+alias u1='cd ..'
+alias u2='cd ../..'
+alias u3='cd ../../..'
+alias u4='cd ../../../..'
+alias u5='cd ../../../../..'
+
+# kubectl shortcuts
+alias kl="kubectl logs"
+alias kgp="kubectl get pods"
+alias kgs="kubectl get services"
+alias kdp="kubectl describe pod"
+alias kds="kubectl describe service"
+alias kdi="kubectl describe ingress"
+alias kgi="kubectl get ingress"
+alias kdelp="kubectl delete pod"
+alias kc="kubectl config"

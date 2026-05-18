@@ -1,0 +1,4 @@
+
+# >>> jack dotfiles >>>
+[ -f "$HOME/.alias" ] && source "$HOME/.alias"
+# <<< jack dotfiles <<<
