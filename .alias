@@ -1,5 +1,12 @@
 # Portable Linux/dev-container aliases (no macOS-specific bits)
 
+# Route `git` through `gt` (Graphite) when available — keeps oh-my-zsh git
+# plugin aliases (gst, gpsup, gd, gco, gcb, gpf, etc) working while preserving
+# Graphite's stack metadata. Zsh expands aliases recursively, so any alias
+# whose expansion starts with `git` will pick up the `gt` routing transparently.
+# Use `command git ...` if you ever need the raw git binary.
+command -v gt >/dev/null 2>&1 && alias git='gt'
+
 # history/grep
 alias hg='history | grep'
 alias g='grep'

@@ -40,9 +40,9 @@ DOTFILES_ANTHROPIC_OAUTH_TOKEN="..." \
 
 ## What it does
 
-- Installs oh-my-zsh (unattended)
+- Installs oh-my-zsh (unattended) — its `git` plugin's aliases (`gst`, `gpsup`, `gd`, `gco`, `gcb`, ...) come along for free
 - Sets zsh as the user's login shell (where permissions allow)
-- Drops `.alias` into `$HOME` (kubectl shortcuts + nav helpers)
+- Drops `.alias` into `$HOME` (kubectl shortcuts, nav helpers, `git` → `gt` routing when Graphite is installed)
 - Maintains a marker-guarded block in `~/.zshrc` (rewritten on each run, so `zshrc.append` updates apply cleanly)
 - Sets `git user.name` / `user.email` *if* provided
 - Installs `@anthropic-ai/claude-code` via npm and configures it for your work OAuth token *if* `--anthropic-token` provided

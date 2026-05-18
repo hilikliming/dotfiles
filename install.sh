@@ -12,6 +12,13 @@
 set -euo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+# Activate mise if present, so mise-managed tools (node/npm/etc) are on PATH.
+# install.sh runs as non-interactive bash, which doesn't source .zshrc/.bashrc,
+# so we need to do this explicitly.
+if command -v mise >/dev/null 2>&1; then
+  eval "$(mise activate bash --shims)" 2>/dev/null || true
+fi
+
 # Args -----------------------------------------------------------------------
 NAME=""; EMAIL=""; CLAUDE_TOKEN=""
 while [[ $# -gt 0 ]]; do
