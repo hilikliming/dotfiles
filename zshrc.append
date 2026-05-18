@@ -1,4 +1,5 @@
 
 # >>> jack dotfiles >>>
 [ -f "$HOME/.alias" ] && source "$HOME/.alias"
+[ -f "$HOME/.anthropic-work-key" ] && export CLAUDE_CODE_OAUTH_TOKEN="$(cat "$HOME/.anthropic-work-key")"
 # <<< jack dotfiles <<<
