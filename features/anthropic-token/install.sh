@@ -17,7 +17,7 @@ cat > "$DST" <<'HELPER'
 # Runs as the container's remoteUser via postCreateCommand.
 set -euo pipefail
 
-SRC="/tmp/anthropic-work-key.mount"
+SRC="/var/anthropic-work-key.mount"
 DST="$HOME/.anthropic-work-key"
 
 if [ ! -f "$SRC" ] || [ ! -s "$SRC" ]; then
