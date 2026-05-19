@@ -1,13 +1,14 @@
 {
   "name": "Anthropic Work Token",
   "id": "anthropic-token",
-  "version": "1.0.0",
-  "description": "Bind-mounts the host ~/.anthropic-work-key file into the container and installs it at $HOME/.anthropic-work-key with mode 600. Paired with dotfiles that export CLAUDE_CODE_OAUTH_TOKEN from that file.",
+  "version": "1.1.0",
+  "description": "Bind-mounts the host ~/.anthropic-work-key file into the container and installs it at $HOME/.anthropic-work-key (mode 600) at postCreate time. Paired with dotfiles that export CLAUDE_CODE_OAUTH_TOKEN from that file.",
   "mounts": [
     {
       "source": "${localEnv:HOME}/.anthropic-work-key",
       "target": "/tmp/anthropic-work-key.mount",
       "type": "bind"
     }
-  ]
+  ],
+  "postCreateCommand": "/usr/local/share/anthropic-token/install-token.sh"
 }
