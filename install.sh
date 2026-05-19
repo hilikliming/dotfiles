@@ -63,12 +63,17 @@ if [ -n "$NAME" ] && [ -n "$EMAIL" ]; then
   echo "Git identity: $NAME <$EMAIL>"
 fi
 
-# 5. Claude Code (only if token provided) -----------------------------------
+# 5. Claude Code -----------------------------------------------------------
+# Token sources (any one is enough; all converge on the same setup below):
+#   - --anthropic-token CLI arg / DOTFILES_ANTHROPIC_OAUTH_TOKEN env var  (write file)
+#   - "anthropic-token" Dev Container Feature                              (file pre-mounted)
+#   - manual paste into $HOME/.anthropic-work-key                          (user-written)
+# zshrc.append exports CLAUDE_CODE_OAUTH_TOKEN from the file on shell start.
 if [ -n "$CLAUDE_TOKEN" ]; then
-  # Token file at $HOME/.anthropic-work-key, 600 perms (matches host convention).
-  # zshrc.append exports CLAUDE_CODE_OAUTH_TOKEN from this file on shell start.
   (umask 077; printf '%s\n' "$CLAUDE_TOKEN" > "$HOME/.anthropic-work-key")
+fi
 
+if [ -s "$HOME/.anthropic-work-key" ]; then
   if ! command -v claude >/dev/null 2>&1; then
     # If no npm and mise is present, install node globally via mise so npm is on
     # PATH regardless of cwd. Per-repo `.mise.toml` only activates inside that repo,
@@ -88,17 +93,13 @@ if [ -n "$CLAUDE_TOKEN" ]; then
     fi
   fi
 
-  # Skip the first-run onboarding wizard so the OAuth token takes effect immediately.
-  # Note: the marker file is ~/.claude.json (TOP-LEVEL home dir), not ~/.claude/.claude.json.
-  # The ~/.claude/ directory holds settings.json, backups/, cache/, etc — but the
-  # onboarding state lives one level up. (claude-work-setup.md's pattern of writing
-  # to <CLAUDE_CONFIG_DIR>/.claude.json works for a non-default config dir like
-  # ~/.claude-work, but with the default config dir the file is ~/.claude.json.)
+  # Skip first-run onboarding wizard. Marker is ~/.claude.json (top-level home dir),
+  # not ~/.claude/.claude.json — the ~/.claude/ dir holds settings.json, backups/, etc.
   mkdir -p "$HOME/.claude"
   [ -f "$HOME/.claude.json" ] || \
     echo '{"hasCompletedOnboarding": true}' > "$HOME/.claude.json"
 
-  echo "Claude Code: token written to ~/.anthropic-work-key (600), auto-exported via .zshrc"
+  echo "Claude Code: token at ~/.anthropic-work-key (600), auto-exported via .zshrc"
 fi
 
 # 6. Default shell → zsh where permissions allow ----------------------------
