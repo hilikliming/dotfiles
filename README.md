@@ -1,6 +1,6 @@
 # dotfiles
 
-Personal dotfiles for Linux dev environments — VS Code devcontainers, GitHub Codespaces, fresh VMs.
+Personal dotfiles for Linux dev environments (VS Code devcontainers, GitHub Codespaces, fresh VMs).
 
 **Public repo, zero PII baked in.** Identity + secrets are injected at runtime (host file mount, env vars, or CLI flags), never committed.
 
@@ -24,14 +24,20 @@ Two pieces of plumbing in your VS Code **user** settings (`Cmd+,` → "Open Sett
 Plus one-time host setup (Mac, in a regular shell):
 
 ```sh
-# Generate an OAuth token if you don't already have one
+# 1. Load your work SSH key into the agent so git operations inside containers
+#    can push. --apple-use-keychain persists across reboots.
+ssh-add --apple-use-keychain ~/.ssh/<your-work-key>
+
+# 2. Generate an OAuth token if you don't already have one
 claude              # log in to the account you want the container to use
 claude setup-token  # outputs a 1-year token
 
-# Save it where the Feature will look for it
+# 3. Save it where the Feature will look for it
 umask 077
 echo 'YOUR_OAUTH_TOKEN_HERE' > ~/.anthropic-work-key
 ```
+
+> **Token rotation:** `claude setup-token` tokens expire after about a year. When `claude` inside the container starts failing on auth, just regenerate (same `claude setup-token`), overwrite `~/.anthropic-work-key` on host, then `exec zsh` in any container shell to re-read the env var. No rebuild needed: the bind mount surfaces the new contents live.
 
 That's it. Every devcontainer you open from then on will:
 
@@ -43,11 +49,11 @@ Git identity is handled separately by VS Code's automatic copy of your host `~/.
 
 ### Why not pass the token through `dotfiles.installCommand` args?
 
-Because VS Code's installCommand parser doesn't handle arguments — it treats the whole `"install.sh --name '...' ..."` string as a single executable path and the install silently fails ([microsoft/vscode-remote-release#5673](https://github.com/microsoft/vscode-remote-release/issues/5673), closed unfixed). The Feature-based mount sidesteps the bug entirely and keeps the token out of `settings.json`.
+Because VS Code's installCommand parser doesn't handle arguments. It treats the whole `"install.sh --name '...' ..."` string as a single executable path and the install silently fails ([microsoft/vscode-remote-release#5673](https://github.com/microsoft/vscode-remote-release/issues/5673), closed unfixed). The Feature-based mount sidesteps the bug entirely and keeps the token out of `settings.json`.
 
 ### Caveats
 
-- **Host file must exist** before opening a devcontainer. If `~/.anthropic-work-key` is missing on the Mac, the container will fail to start with `bind source path does not exist` (the dev containers spec doesn't yet support optional mounts — [devcontainers/spec#132](https://github.com/devcontainers/spec/issues/132)). The bootstrap above creates it; just don't delete it.
+- **Host file must exist** before opening a devcontainer. If `~/.anthropic-work-key` is missing on the Mac, the container will fail to start with `bind source path does not exist` (the dev containers spec doesn't yet support optional mounts, see [devcontainers/spec#132](https://github.com/devcontainers/spec/issues/132)). The bootstrap above creates it; just don't delete it.
 - **First publish of the Feature is private on GHCR.** After the GitHub Action publishes for the first time, visit `github.com/users/hilikliming/packages/container/dotfiles%2Fanthropic-token/settings` and set visibility to Public so the devcontainer CLI can pull without auth.
 - **`devcontainer-lock.json` may pin the Feature reference** into team repos ([microsoft/vscode-remote-release#11616](https://github.com/microsoft/vscode-remote-release/issues/11616)). To avoid accidentally committing it, the global gitignore covers it:
   ```sh
@@ -57,7 +63,7 @@ Because VS Code's installCommand parser doesn't handle arguments — it treats t
 
 ## Use manually (no VS Code)
 
-Args, env vars, or a pre-placed token file all work — pick whichever fits the situation:
+Args, env vars, or a pre-placed token file all work. Pick whichever fits the situation:
 
 ```sh
 git clone https://github.com/hilikliming/dotfiles ~/dotfiles
@@ -79,11 +85,11 @@ echo 'YOUR_OAUTH_TOKEN' > ~/.anthropic-work-key && chmod 600 ~/.anthropic-work-k
 ~/dotfiles/install.sh
 ```
 
-The Claude setup (CLI install + onboarding-skip) fires whenever `~/.anthropic-work-key` ends up non-empty, regardless of which path put it there. Idempotent — safe to re-run.
+The Claude setup (CLI install + onboarding-skip) fires whenever `~/.anthropic-work-key` ends up non-empty, regardless of which path put it there. Idempotent, safe to re-run.
 
 ## What it does
 
-- Installs oh-my-zsh (unattended) — its `git` plugin's aliases (`gst`, `gpsup`, `gd`, `gco`, `gcb`, …) come along for free
+- Installs oh-my-zsh (unattended). Its `git` plugin's aliases (`gst`, `gpsup`, `gd`, `gco`, `gcb`, etc.) come along for free
 - Sets zsh as the user's login shell (where permissions allow)
 - Drops `.alias` into `$HOME` (kubectl shortcuts, nav helpers, `git` → `gt` routing when Graphite is installed)
 - Maintains a marker-guarded block in `~/.zshrc` (rewritten on each run, so `zshrc.append` updates apply cleanly)
@@ -95,4 +101,5 @@ The Claude setup (CLI install + onboarding-skip) fires whenever `~/.anthropic-wo
 - When `~/.claude-work` exists on the host (via the `claude-work` Feature):
   - Bind-mounts host `~/.claude-work` into the container and symlinks it at `$HOME/.claude-work`
   - `zshrc.append` exports `CLAUDE_CONFIG_DIR=$HOME/.claude-work` so Claude Code reads/writes the shared config dir
-  - Preferences, memories, and conversation transcripts persist across container rebuilds and stay in sync with the host's Claude Code
+  - Preferences, global memories, and `settings.json` persist across container rebuilds and stay in sync with the host's Claude Code
+  - **Caveat: per-project conversation transcripts and per-project memories do NOT auto-merge across the host/container boundary.** Claude Code scopes them by cwd-derived project path (e.g. host cwd `/Users/jhall` becomes `projects/-Users-jhall/`, container cwd `/workspaces/k-and-e-transaction-management-platform` becomes `projects/-workspaces-k-and-e-.../`). Different folders inside the same `projects/` tree means "resume yesterday's host conversation from inside the container" doesn't just work. Global settings travel, project-scoped state doesn't.

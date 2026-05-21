@@ -2,7 +2,7 @@
 # Build-time setup for the anthropic-token Feature.
 #
 # The bind-mount declared in devcontainer-feature.json's `mounts` is only
-# attached at container *run* time, not at *build* time — so we can't copy
+# attached at container *run* time, not at *build* time, so we can't copy
 # from the mount here. Instead, install a small helper script that the
 # Feature's postCreateCommand invokes once the container is up.
 set -euo pipefail
