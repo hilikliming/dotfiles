@@ -3,4 +3,10 @@
 [ -f "$HOME/.alias" ] && source "$HOME/.alias"
 [ -f "$HOME/.anthropic-work-key" ] && export CLAUDE_CODE_OAUTH_TOKEN="$(cat "$HOME/.anthropic-work-key")"
 [ -d "$HOME/.claude-work" ] && export CLAUDE_CONFIG_DIR="$HOME/.claude-work"
+
+# Override the base image's minimalist ZSH_THEME (e.g. devcontainers/codespaces
+# images set ZSH_THEME="devcontainers" which omits git status). Re-source the
+# theme we actually want, after oh-my-zsh has loaded.
+[ -n "${ZSH:-}" ] && [ -f "$ZSH/themes/robbyrussell.zsh-theme" ] && \
+  source "$ZSH/themes/robbyrussell.zsh-theme"
 # <<< jack dotfiles <<<
