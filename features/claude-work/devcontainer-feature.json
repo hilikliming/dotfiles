@@ -1,0 +1,14 @@
+{
+  "name": "Claude Work Config Mount",
+  "id": "claude-work",
+  "version": "1.0.0",
+  "description": "Bind-mounts the host ~/.claude-work directory into the container and symlinks it at $HOME/.claude-work, so Claude Code settings, memories, and per-project conversation state persist across rebuilds. Paired with zshrc.append exporting CLAUDE_CONFIG_DIR=$HOME/.claude-work.",
+  "mounts": [
+    {
+      "source": "${localEnv:HOME}/.claude-work",
+      "target": "/var/claude-work.mount",
+      "type": "bind"
+    }
+  ],
+  "postCreateCommand": "/usr/local/share/claude-work/install-claude-work.sh"
+}

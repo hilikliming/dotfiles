@@ -13,10 +13,13 @@ Two pieces of plumbing in your VS Code **user** settings (`Cmd+,` → "Open Sett
 "dotfiles.targetPath": "~/dotfiles",
 "dotfiles.installCommand": "install.sh",
 "dev.containers.defaultFeatures": {
-    "ghcr.io/hilikliming/dotfiles/anthropic-token:1": {}
+    "ghcr.io/hilikliming/dotfiles/anthropic-token:1": {},
+    "ghcr.io/hilikliming/dotfiles/claude-work:1": {}
 },
 "terminal.integrated.defaultProfile.linux": "zsh"
 ```
+
+> **Heads-up for forkers:** the `claude-work` Feature mounts the host's `~/.claude-work` dir, which is unusual. I use it because I run a work/personal Claude Code split (`CLAUDE_CONFIG_DIR=~/.claude-work` for the work account, default `~/.claude` for personal). If you don't have that split and use plain `~/.claude`, fork this Feature and change two paths: the mount `source` in `features/claude-work/devcontainer-feature.json` and the `CLAUDE_CONFIG_DIR` line in `zshrc.append`. Swap `.claude-work` for `.claude` in both spots.
 
 Plus one-time host setup (Mac, in a regular shell):
 
@@ -89,3 +92,7 @@ The Claude setup (CLI install + onboarding-skip) fires whenever `~/.anthropic-wo
   - Installs `@anthropic-ai/claude-code` via npm (via mise-managed node if needed)
   - Pre-marks the onboarding wizard complete so the token takes effect immediately
   - `zshrc.append` auto-exports `CLAUDE_CODE_OAUTH_TOKEN` from the file on every shell start
+- When `~/.claude-work` exists on the host (via the `claude-work` Feature):
+  - Bind-mounts host `~/.claude-work` into the container and symlinks it at `$HOME/.claude-work`
+  - `zshrc.append` exports `CLAUDE_CONFIG_DIR=$HOME/.claude-work` so Claude Code reads/writes the shared config dir
+  - Preferences, memories, and conversation transcripts persist across container rebuilds and stay in sync with the host's Claude Code
