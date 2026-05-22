@@ -1,0 +1,14 @@
+{
+  "name": "Graphite Work Token",
+  "id": "graphite-token",
+  "version": "1.0.0",
+  "description": "Bind-mounts the host ~/.graphite-work-token file into the container and installs it at $HOME/.graphite-work-token (mode 600, owned by $_REMOTE_USER) at postCreate time. Paired with dotfiles that run `gt auth --token` from that file. Mount target is under /var to avoid being shadowed by /tmp tmpfs overlays (e.g., from docker-in-docker).",
+  "mounts": [
+    {
+      "source": "${localEnv:HOME}/.graphite-work-token",
+      "target": "/var/graphite-work-token.mount",
+      "type": "bind"
+    }
+  ],
+  "postCreateCommand": "/usr/local/share/graphite-token/install-token.sh"
+}

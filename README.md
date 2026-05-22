@@ -14,7 +14,9 @@ Two pieces of plumbing in your VS Code **user** settings (`Cmd+,` → "Open Sett
 "dotfiles.installCommand": "install.sh",
 "dev.containers.defaultFeatures": {
     "ghcr.io/hilikliming/dotfiles/anthropic-token:1": {},
-    "ghcr.io/hilikliming/dotfiles/claude-work:1": {}
+    "ghcr.io/hilikliming/dotfiles/claude-work:1": {},
+    "ghcr.io/hilikliming/dotfiles/github-token:1": {},
+    "ghcr.io/hilikliming/dotfiles/graphite-token:1": {}
 },
 "terminal.integrated.defaultProfile.linux": "zsh"
 ```
@@ -35,9 +37,28 @@ claude setup-token  # outputs a 1-year token
 # 3. Save it where the Feature will look for it
 umask 077
 echo 'YOUR_OAUTH_TOKEN_HERE' > ~/.anthropic-work-key
+
+# 4. (Optional) GitHub CLI token for `gh` ops (PRs, issues, CI status).
+#    Git push/pull goes over SSH via the forwarded agent. `gh` is only used
+#    for API ops, so it gets its own PAT. Create at
+#    https://github.com/settings/personal-access-tokens/new (fine-grained,
+#    repo scope: Contents R/W, Pull requests R/W, Issues R/W, Actions R,
+#    plus Organization → Members R if you want org listing). Fine-grained
+#    PATs targeting org repos may need org admin approval before they work;
+#    if cross-org access matters, fall back to a classic PAT with `repo`,
+#    `read:org`, `workflow`.
+umask 077
+echo 'YOUR_GITHUB_PAT_HERE' > ~/.github-work-token
+
+# 5. (Optional) Graphite CLI token. Get it from `gt auth --status` on a host
+#    where Graphite is already logged in, or from the Graphite web UI.
+umask 077
+echo 'YOUR_GRAPHITE_TOKEN_HERE' > ~/.graphite-work-token
 ```
 
-> **Token rotation:** `claude setup-token` tokens expire after about a year. When `claude` inside the container starts failing on auth, just regenerate (same `claude setup-token`), overwrite `~/.anthropic-work-key` on host, then `exec zsh` in any container shell to re-read the env var. No rebuild needed: the bind mount surfaces the new contents live.
+> **Token rotation:**
+> - **Anthropic:** `claude setup-token` tokens expire after about a year. When `claude` inside the container starts failing on auth, regenerate (same `claude setup-token`), overwrite `~/.anthropic-work-key` on host, then `exec zsh` in any container shell to re-read the env var. No rebuild needed: the bind mount surfaces the new contents live.
+> - **GitHub / Graphite:** overwrite the same file on the host (`umask 077; echo NEW > ~/.X-work-token`), then `exec zsh` in the container. `gh` and `gt` cache auth state, so on the next container rebuild the postCreate copy + `install.sh` re-auth will pick up the new token; for an existing container you can run `gh auth login --with-token < ~/.github-work-token` or `gt auth --token "$(cat ~/.graphite-work-token)"` directly to refresh without a rebuild.
 
 That's it. Every devcontainer you open from then on will:
 
@@ -53,7 +74,7 @@ Because VS Code's installCommand parser doesn't handle arguments. It treats the 
 
 ### Caveats
 
-- **Host file must exist** before opening a devcontainer. If `~/.anthropic-work-key` is missing on the Mac, the container will fail to start with `bind source path does not exist` (the dev containers spec doesn't yet support optional mounts, see [devcontainers/spec#132](https://github.com/devcontainers/spec/issues/132)). The bootstrap above creates it; just don't delete it.
+- **Host files must exist** before opening a devcontainer. If `~/.anthropic-work-key`, `~/.github-work-token`, or `~/.graphite-work-token` is missing on the Mac while the corresponding Feature is enabled, the container will fail to start with `bind source path does not exist` (the dev containers spec doesn't yet support optional mounts, see [devcontainers/spec#132](https://github.com/devcontainers/spec/issues/132)). The bootstrap above creates all three; just don't delete them. If you don't want one of them, drop the matching entry from `dev.containers.defaultFeatures`.
 - **First publish of the Feature is private on GHCR.** After the GitHub Action publishes for the first time, visit `github.com/users/hilikliming/packages/container/dotfiles%2Fanthropic-token/settings` and set visibility to Public so the devcontainer CLI can pull without auth.
 - **`devcontainer-lock.json` may pin the Feature reference** into team repos ([microsoft/vscode-remote-release#11616](https://github.com/microsoft/vscode-remote-release/issues/11616)). To avoid accidentally committing it, the global gitignore covers it:
   ```sh
@@ -98,6 +119,14 @@ The Claude setup (CLI install + onboarding-skip) fires whenever `~/.anthropic-wo
   - Installs `@anthropic-ai/claude-code` via npm (via mise-managed node if needed)
   - Pre-marks the onboarding wizard complete so the token takes effect immediately
   - `zshrc.append` auto-exports `CLAUDE_CODE_OAUTH_TOKEN` from the file on every shell start
+- Installs `gh` (GitHub CLI) from the official apt repo when it's missing and `apt-get` is available
+- When `~/.github-work-token` is present and non-empty (via the `github-token` Feature):
+  - Bind-mounts the file from host and stages it at `$HOME/.github-work-token` (mode 600, owned by the container user)
+  - Runs `gh auth login --with-token` from it once `gh` is on PATH, so API ops (PRs, issues, CI) work out of the box
+  - Does **not** run `gh auth setup-git` (git push/pull stays on SSH via the forwarded agent)
+- When `~/.graphite-work-token` is present and non-empty (via the `graphite-token` Feature):
+  - Bind-mounts the file from host and stages it at `$HOME/.graphite-work-token` (mode 600, owned by the container user)
+  - Runs `gt auth --token "$(cat ...)"` if `gt` is on PATH (the team's `setup.sh` installs `gt` via mise before this script runs)
 - When `~/.claude-work` exists on the host (via the `claude-work` Feature):
   - Bind-mounts host `~/.claude-work` into the container and symlinks it at `$HOME/.claude-work`
   - `zshrc.append` exports `CLAUDE_CONFIG_DIR=$HOME/.claude-work` so Claude Code reads/writes the shared config dir

@@ -102,7 +102,59 @@ if [ -s "$HOME/.anthropic-work-key" ]; then
   echo "Claude Code: token at ~/.anthropic-work-key (600), auto-exported via .zshrc"
 fi
 
-# 6. Default shell → zsh where permissions allow ----------------------------
+# 6. GitHub CLI (`gh`): install via official apt repo ----------------------
+# Used for GitHub API ops only (PRs, issues, CI status). SSH agent forward
+# handles git push/pull transport, so we deliberately don't run
+# `gh auth setup-git`. Team `setup.sh` does not install `gh`.
+if ! command -v gh >/dev/null 2>&1 && command -v apt-get >/dev/null 2>&1; then
+  echo "Installing GitHub CLI (gh) from the official apt repo..."
+  if ! command -v wget >/dev/null 2>&1; then
+    sudo apt-get update -y && sudo apt-get install -y wget
+  fi
+  sudo mkdir -p -m 755 /etc/apt/keyrings
+  KEYRING=/etc/apt/keyrings/githubcli-archive-keyring.gpg
+  if [ ! -s "$KEYRING" ]; then
+    TMP_KEY="$(mktemp)"
+    wget -nv -O "$TMP_KEY" https://cli.github.com/packages/githubcli-archive-keyring.gpg
+    sudo install -m 644 "$TMP_KEY" "$KEYRING"
+    rm -f "$TMP_KEY"
+  fi
+  sudo mkdir -p -m 755 /etc/apt/sources.list.d
+  SOURCES_LIST=/etc/apt/sources.list.d/github-cli.list
+  ARCH="$(dpkg --print-architecture)"
+  echo "deb [arch=$ARCH signed-by=$KEYRING] https://cli.github.com/packages stable main" \
+    | sudo tee "$SOURCES_LIST" >/dev/null
+  sudo apt-get update -y && sudo apt-get install -y gh \
+    || echo "Warning: gh apt install failed; install manually or retry later."
+fi
+
+# 7. `gh` auth: non-interactive login from token file ---------------------
+# Fine-grained PATs may need org admin approval to access org repos; we keep
+# going on failure so the rest of the bootstrap still runs.
+if [ -s "$HOME/.github-work-token" ] && command -v gh >/dev/null 2>&1; then
+  if ! gh auth status >/dev/null 2>&1; then
+    if gh auth login --with-token < "$HOME/.github-work-token"; then
+      echo "gh: authenticated from ~/.github-work-token"
+    else
+      echo "Warning: 'gh auth login --with-token' failed."
+      echo "  Fine-grained PATs may need org admin approval before they work against org repos."
+      echo "  See: https://docs.github.com/en/organizations/managing-programmatic-access-to-your-organization/managing-requests-for-personal-access-tokens-in-your-organization"
+    fi
+  fi
+fi
+
+# 8. `gt` auth: Graphite CLI token login -----------------------------------
+# Team `setup.sh` installs `gt` via mise before this script runs, so we just
+# auth here. Skip silently if `gt` or the token file isn't present.
+if [ -s "$HOME/.graphite-work-token" ] && command -v gt >/dev/null 2>&1; then
+  if gt auth --token "$(cat "$HOME/.graphite-work-token")" >/dev/null 2>&1; then
+    echo "gt: authenticated from ~/.graphite-work-token"
+  else
+    echo "Warning: 'gt auth --token' failed; regenerate the Graphite token if it has expired."
+  fi
+fi
+
+# 9. Default shell → zsh where permissions allow ----------------------------
 if command -v zsh >/dev/null 2>&1; then
   current_shell="$(getent passwd "$USER" 2>/dev/null | cut -d: -f7 || echo "")"
   zsh_path="$(command -v zsh)"

@@ -1,0 +1,14 @@
+{
+  "name": "GitHub Work Token",
+  "id": "github-token",
+  "version": "1.0.0",
+  "description": "Bind-mounts the host ~/.github-work-token file into the container and installs it at $HOME/.github-work-token (mode 600, owned by $_REMOTE_USER) at postCreate time. Paired with dotfiles that run `gh auth login --with-token` from that file once `gh` is installed. Mount target is under /var to avoid being shadowed by /tmp tmpfs overlays (e.g., from docker-in-docker).",
+  "mounts": [
+    {
+      "source": "${localEnv:HOME}/.github-work-token",
+      "target": "/var/github-work-token.mount",
+      "type": "bind"
+    }
+  ],
+  "postCreateCommand": "/usr/local/share/github-token/install-token.sh"
+}
