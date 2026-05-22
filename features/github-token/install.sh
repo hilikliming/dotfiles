@@ -32,9 +32,9 @@ fi
 
 cp "$SRC" "$DST"
 chmod 600 "$DST"
-# chown to self at postCreate is essentially a no-op (file is already owned
-# by the remote user since we're running as them), but make the guarantee
-# explicit. Tolerate failure in restricted environments.
+# Belt-and-suspenders: helper runs as the remote user, so `cp` already
+# produces a file owned by them, but make the ownership guarantee explicit
+# (and tolerate failure in restricted environments where chown is blocked).
 chown "$TARGET_USER" "$DST" 2>/dev/null || true
 
 ACT_MODE="$(stat -c '%a' "$DST" 2>/dev/null || stat -f '%Lp' "$DST" 2>/dev/null || echo 'unknown')"

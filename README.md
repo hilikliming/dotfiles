@@ -50,7 +50,7 @@ echo 'YOUR_OAUTH_TOKEN_HERE' > ~/.anthropic-work-key
 umask 077
 echo 'YOUR_GITHUB_PAT_HERE' > ~/.github-work-token
 
-# 5. (Optional) Graphite CLI token. Get it from `gt auth --status` on a host
+# 5. (Optional) Graphite CLI token. Get it from `gt auth status` on a host
 #    where Graphite is already logged in, or from the Graphite web UI.
 umask 077
 echo 'YOUR_GRAPHITE_TOKEN_HERE' > ~/.graphite-work-token

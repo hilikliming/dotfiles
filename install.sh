@@ -147,7 +147,7 @@ fi
 # Team `setup.sh` installs `gt` via mise before this script runs, so we just
 # auth here. Skip silently if `gt` or the token file isn't present.
 if [ -s "$HOME/.graphite-work-token" ] && command -v gt >/dev/null 2>&1; then
-  if gt auth --token "$(cat "$HOME/.graphite-work-token")" >/dev/null 2>&1; then
+  if gt auth --token "$(cat "$HOME/.graphite-work-token")" >/dev/null; then
     echo "gt: authenticated from ~/.graphite-work-token"
   else
     echo "Warning: 'gt auth --token' failed; regenerate the Graphite token if it has expired."
