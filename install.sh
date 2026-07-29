@@ -5,10 +5,11 @@
 # Usage:
 #   install.sh
 #   install.sh --name "..." --email "..."
-#   install.sh --name "..." --email "..." --anthropic-token "..."
 #
-# Env-var fallbacks: DOTFILES_GIT_USER_NAME, DOTFILES_GIT_USER_EMAIL,
-#                    DOTFILES_ANTHROPIC_OAUTH_TOKEN
+# Env-var fallbacks: DOTFILES_GIT_USER_NAME, DOTFILES_GIT_USER_EMAIL
+#
+# Claude Code auth needs no flag: the "claude-work" Feature mounts the host's
+# ~/.claude-work (which holds .credentials.json) and links it into place.
 set -euo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
@@ -20,19 +21,17 @@ if command -v mise >/dev/null 2>&1; then
 fi
 
 # Args -----------------------------------------------------------------------
-NAME=""; EMAIL=""; CLAUDE_TOKEN=""
+NAME=""; EMAIL=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --name)             NAME="$2";         shift 2 ;;
     --email)            EMAIL="$2";        shift 2 ;;
-    --anthropic-token)  CLAUDE_TOKEN="$2"; shift 2 ;;
     -h|--help) grep '^#' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "Unknown arg: $1" >&2; exit 1 ;;
   esac
 done
 NAME="${NAME:-${DOTFILES_GIT_USER_NAME:-}}"
 EMAIL="${EMAIL:-${DOTFILES_GIT_USER_EMAIL:-}}"
-CLAUDE_TOKEN="${CLAUDE_TOKEN:-${DOTFILES_ANTHROPIC_OAUTH_TOKEN:-}}"
 
 # 1. oh-my-zsh (unattended; preserves existing .zshrc) -----------------------
 if [ ! -d "$HOME/.oh-my-zsh" ]; then
@@ -42,6 +41,13 @@ if [ ! -d "$HOME/.oh-my-zsh" ]; then
 fi
 
 # 2. Drop .alias into $HOME -------------------------------------------------
+# Back up a differing existing file rather than silently clobbering it. The
+# Mac's ~/.alias carries Claude work/personal profile aliases that are
+# deliberately not in this repo (they are macOS-keychain specific).
+if [ -f "$HOME/.alias" ] && ! cmp -s "$DIR/.alias" "$HOME/.alias"; then
+  cp -p "$HOME/.alias" "$HOME/.alias.dotfiles-backup.$(date +%s)"
+  echo "Backed up differing ~/.alias before overwriting."
+fi
 cp -f "$DIR/.alias" "$HOME/.alias"
 
 # 3. .zshrc marker block — rewrite each run so updates to zshrc.append apply -
@@ -64,16 +70,15 @@ if [ -n "$NAME" ] && [ -n "$EMAIL" ]; then
 fi
 
 # 5. Claude Code -----------------------------------------------------------
-# Token sources (any one is enough; all converge on the same setup below):
-#   - --anthropic-token CLI arg / DOTFILES_ANTHROPIC_OAUTH_TOKEN env var  (write file)
-#   - "anthropic-token" Dev Container Feature                              (file pre-mounted)
-#   - manual paste into $HOME/.anthropic-work-key                          (user-written)
-# zshrc.append exports CLAUDE_CODE_OAUTH_TOKEN from the file on shell start.
-if [ -n "$CLAUDE_TOKEN" ]; then
-  (umask 077; printf '%s\n' "$CLAUDE_TOKEN" > "$HOME/.anthropic-work-key")
-fi
-
-if [ -s "$HOME/.anthropic-work-key" ]; then
+# No token injection. Claude Code >= 2.1.197 keeps credentials per config dir,
+# so the container authenticates from the .credentials.json inside the mounted
+# work config dir. The "claude-work" Feature bind-mounts it and symlinks it to
+# both $HOME/.claude-work and $HOME/.claude.
+#
+# Gate on the mount rather than the symlink: the mount exists from container
+# start, whereas the symlink is created by the Feature's postCreateCommand,
+# whose ordering against the VS Code dotfiles flow is not guaranteed.
+if [ -d "/var/claude-work.mount" ] || [ -d "$HOME/.claude-work" ]; then
   if ! command -v claude >/dev/null 2>&1; then
     # If no npm and mise is present, install node globally via mise so npm is on
     # PATH regardless of cwd. Per-repo `.mise.toml` only activates inside that repo,
@@ -89,17 +94,18 @@ if [ -s "$HOME/.anthropic-work-key" ]; then
         || sudo -E env "PATH=$PATH" npm install -g @anthropic-ai/claude-code \
         || echo "Warning: claude install failed (try: 'mise use -g node@lts && npm i -g @anthropic-ai/claude-code')"
     else
-      echo "Note: no npm available — token saved to ~/.anthropic-work-key; install claude manually."
+      echo "Note: no npm available; install claude manually."
     fi
   fi
 
-  # Skip first-run onboarding wizard. Marker is ~/.claude.json (top-level home dir),
-  # not ~/.claude/.claude.json — the ~/.claude/ dir holds settings.json, backups/, etc.
-  mkdir -p "$HOME/.claude"
+  # Skip first-run onboarding wizard. Marker is ~/.claude.json (top-level home
+  # dir), not ~/.claude/.claude.json. Deliberately no 'mkdir -p $HOME/.claude'
+  # here: that dir is a symlink to the mount, and creating it as a real dir
+  # first would just force the Feature's helper to move it aside.
   [ -f "$HOME/.claude.json" ] || \
     echo '{"hasCompletedOnboarding": true}' > "$HOME/.claude.json"
 
-  echo "Claude Code: token at ~/.anthropic-work-key (600), auto-exported via .zshrc"
+  echo "Claude Code: auth from the mounted work config dir (no token injected)."
 fi
 
 # 6. GitHub CLI (`gh`): install via official apt repo ----------------------

@@ -1,8 +1,8 @@
 {
   "name": "Claude Work Config Mount",
   "id": "claude-work",
-  "version": "1.0.0",
-  "description": "Bind-mounts the host ~/.claude-work directory into the container and symlinks it at $HOME/.claude-work, so Claude Code settings, memories, and per-project conversation state persist across rebuilds. Paired with zshrc.append exporting CLAUDE_CONFIG_DIR=$HOME/.claude-work.",
+  "version": "1.1.0",
+  "description": "Bind-mounts the host ~/.claude-work directory into the container and symlinks it at both $HOME/.claude-work and $HOME/.claude, so Claude Code settings, memories, credentials, and per-project conversation state persist across rebuilds. This is also how the container authenticates: the mounted dir carries .credentials.json, so no OAuth token needs injecting. Linking the default config dir too means launchers that never source .zshrc (the VS Code Claude Code panel, tasks) find credentials as well. Paired with zshrc.append exporting CLAUDE_CONFIG_DIR=$HOME/.claude-work.",
   "mounts": [
     {
       "source": "${localEnv:HOME}/.claude-work",

@@ -1,7 +1,13 @@
 
 # >>> jack dotfiles >>>
 [ -f "$HOME/.alias" ] && source "$HOME/.alias"
-[ -f "$HOME/.anthropic-work-key" ] && export CLAUDE_CODE_OAUTH_TOKEN="$(cat "$HOME/.anthropic-work-key")"
+# Claude Code auth comes from the work config dir, not an injected token.
+# Claude Code >= 2.1.197 keeps credentials per config dir, so the old
+# CLAUDE_CODE_OAUTH_TOKEN export is gone: an env token carries no refresh
+# token, cannot renew, and outranks the good credential when both exist.
+# The claude-work Feature also symlinks $HOME/.claude to the same mount, so
+# launchers that never source this file (the VS Code panel, for one) still
+# find credentials.
 [ -d "$HOME/.claude-work" ] && export CLAUDE_CONFIG_DIR="$HOME/.claude-work"
 
 # Override the base image's minimalist ZSH_THEME (e.g. devcontainers/codespaces

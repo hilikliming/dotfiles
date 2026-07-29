@@ -13,7 +13,6 @@ Two pieces of plumbing in your VS Code **user** settings (`Cmd+,` → "Open Sett
 "dotfiles.targetPath": "~/dotfiles",
 "dotfiles.installCommand": "install.sh",
 "dev.containers.defaultFeatures": {
-    "ghcr.io/hilikliming/dotfiles/anthropic-token:1": {},
     "ghcr.io/hilikliming/dotfiles/claude-work:1": {},
     "ghcr.io/hilikliming/dotfiles/github-token:1": {},
     "ghcr.io/hilikliming/dotfiles/graphite-token:1": {}
@@ -22,6 +21,8 @@ Two pieces of plumbing in your VS Code **user** settings (`Cmd+,` → "Open Sett
 ```
 
 > **Heads-up for forkers:** the `claude-work` Feature mounts the host's `~/.claude-work` dir, which is unusual. I use it because I run a work/personal Claude Code split (`CLAUDE_CONFIG_DIR=~/.claude-work` for the work account, default `~/.claude` for personal). If you don't have that split and use plain `~/.claude`, fork this Feature and change two paths: the mount `source` in `features/claude-work/devcontainer-feature.json` and the `CLAUDE_CONFIG_DIR` line in `zshrc.append`. Swap `.claude-work` for `.claude` in both spots.
+>
+> **This mount is also how the container authenticates.** It carries `.credentials.json`, so nothing injects an OAuth token. If you fork this and don't want your host Claude credentials visible inside containers, don't enable the Feature.
 
 Plus one-time host setup (Mac, in a regular shell):
 
@@ -30,15 +31,12 @@ Plus one-time host setup (Mac, in a regular shell):
 #    can push. --apple-use-keychain persists across reboots.
 ssh-add --apple-use-keychain ~/.ssh/<your-work-key>
 
-# 2. Generate an OAuth token if you don't already have one
-claude              # log in to the account you want the container to use
-claude setup-token  # outputs a 1-year token
+# 2. Log the work profile in once, so ~/.claude-work exists and holds
+#    credentials the containers can share. No `claude setup-token` involved:
+#    Claude Code >= 2.1.197 keeps credentials per config dir.
+CLAUDE_CONFIG_DIR="$HOME/.claude-work" claude   # then /login
 
-# 3. Save it where the Feature will look for it
-umask 077
-echo 'YOUR_OAUTH_TOKEN_HERE' > ~/.anthropic-work-key
-
-# 4. (Optional) GitHub CLI token for `gh` ops (PRs, issues, CI status).
+# 3. (Optional) GitHub CLI token for `gh` ops (PRs, issues, CI status).
 #    Git push/pull goes over SSH via the forwarded agent. `gh` is only used
 #    for API ops, so it gets its own PAT. Create at
 #    https://github.com/settings/personal-access-tokens/new (fine-grained,
@@ -50,63 +48,55 @@ echo 'YOUR_OAUTH_TOKEN_HERE' > ~/.anthropic-work-key
 umask 077
 echo 'YOUR_GITHUB_PAT_HERE' > ~/.github-work-token
 
-# 5. (Optional) Graphite CLI token. Get it from `gt auth status` on a host
+# 4. (Optional) Graphite CLI token. Get it from `gt auth status` on a host
 #    where Graphite is already logged in, or from the Graphite web UI.
 umask 077
 echo 'YOUR_GRAPHITE_TOKEN_HERE' > ~/.graphite-work-token
 ```
 
 > **Token rotation:**
-> - **Anthropic:** `claude setup-token` tokens expire after about a year. When `claude` inside the container starts failing on auth, regenerate (same `claude setup-token`), overwrite `~/.anthropic-work-key` on host, then `exec zsh` in any container shell to re-read the env var. No rebuild needed: the bind mount surfaces the new contents live.
+> - **Anthropic:** nothing to rotate. The container reads the same `.credentials.json` as the host through the bind mount, and Claude Code refreshes it in place using the stored refresh token. When the refresh token itself finally lapses, `/login` once (host or container, either writes through the mount) and every container picks it up live. This is the whole reason the old `anthropic-token` Feature was retired: an injected `CLAUDE_CODE_OAUTH_TOKEN` is a bare access token with no refresh token, so it could not renew, and it silently outranked the good credential whenever both were present.
 > - **GitHub / Graphite:** overwrite the same file on the host (`umask 077; echo NEW > ~/.X-work-token`), then `exec zsh` in the container. `gh` and `gt` cache auth state, so on the next container rebuild the postCreate copy + `install.sh` re-auth will pick up the new token; for an existing container you can run `gh auth login --with-token < ~/.github-work-token` or `gt auth --token "$(cat ~/.graphite-work-token)"` directly to refresh without a rebuild.
 
 That's it. Every devcontainer you open from then on will:
 
-1. Auto-apply the `anthropic-token` Feature, which bind-mounts `~/.anthropic-work-key` from your Mac into the container and installs it at `$HOME/.anthropic-work-key` (mode 0600, owned by the container user).
-2. Run `install.sh` (no args), which sets up oh-my-zsh / `.alias` / `.zshrc`, then notices the token file is already in place and installs `@anthropic-ai/claude-code` plus the onboarding-skip marker.
-3. Export `CLAUDE_CODE_OAUTH_TOKEN` from the token file on every shell start (via `zshrc.append`).
+1. Auto-apply the `claude-work` Feature, which bind-mounts `~/.claude-work` from your Mac and symlinks it at both `$HOME/.claude-work` and `$HOME/.claude`. Credentials come from the `.credentials.json` inside it.
+2. Run `install.sh` (no args), which sets up oh-my-zsh / `.alias` / `.zshrc`, then notices the work config mount and installs `@anthropic-ai/claude-code` plus the onboarding-skip marker.
+3. Export `CLAUDE_CONFIG_DIR=$HOME/.claude-work` on every shell start (via `zshrc.append`). The `$HOME/.claude` symlink covers launchers that never source `.zshrc`.
 
 Git identity is handled separately by VS Code's automatic copy of your host `~/.gitconfig` (`dev.containers.copyGitConfig`, default on).
 
-### Why not pass the token through `dotfiles.installCommand` args?
+### Why not pass secrets through `dotfiles.installCommand` args?
 
-Because VS Code's installCommand parser doesn't handle arguments. It treats the whole `"install.sh --name '...' ..."` string as a single executable path and the install silently fails ([microsoft/vscode-remote-release#5673](https://github.com/microsoft/vscode-remote-release/issues/5673), closed unfixed). The Feature-based mount sidesteps the bug entirely and keeps the token out of `settings.json`.
+Because VS Code's installCommand parser doesn't handle arguments. It treats the whole `"install.sh --name '...' ..."` string as a single executable path and the install silently fails ([microsoft/vscode-remote-release#5673](https://github.com/microsoft/vscode-remote-release/issues/5673), closed unfixed). The Feature-based mounts sidestep the bug entirely and keep credentials out of `settings.json`.
 
 ### Caveats
 
-- **Host files must exist** before opening a devcontainer. If `~/.anthropic-work-key`, `~/.github-work-token`, or `~/.graphite-work-token` is missing on the Mac while the corresponding Feature is enabled, the container will fail to start with `bind source path does not exist` (the dev containers spec doesn't yet support optional mounts, see [devcontainers/spec#132](https://github.com/devcontainers/spec/issues/132)). The bootstrap above creates all three; just don't delete them. If you don't want one of them, drop the matching entry from `dev.containers.defaultFeatures`.
-- **First publish of the Feature is private on GHCR.** After the GitHub Action publishes for the first time, visit `github.com/users/hilikliming/packages/container/dotfiles%2Fanthropic-token/settings` and set visibility to Public so the devcontainer CLI can pull without auth.
+- **Host files must exist** before opening a devcontainer. If `~/.claude-work`, `~/.github-work-token`, or `~/.graphite-work-token` is missing on the Mac while the corresponding Feature is enabled, the container will fail to start with `bind source path does not exist` (the dev containers spec doesn't yet support optional mounts, see [devcontainers/spec#132](https://github.com/devcontainers/spec/issues/132)). The bootstrap above creates all three; just don't delete them. If you don't want one of them, drop the matching entry from `dev.containers.defaultFeatures`.
+- **First publish of the Feature is private on GHCR.** After the GitHub Action publishes for the first time, visit `github.com/users/hilikliming/packages/container/dotfiles%2Fclaude-work/settings` and set visibility to Public so the devcontainer CLI can pull without auth.
 - **`devcontainer-lock.json` may pin the Feature reference** into team repos ([microsoft/vscode-remote-release#11616](https://github.com/microsoft/vscode-remote-release/issues/11616)). To avoid accidentally committing it, the global gitignore covers it:
   ```sh
   echo '.devcontainer/devcontainer-lock.json' >> ~/.config/git/ignore
   ```
-- **Codespaces:** `${localEnv:HOME}` resolves to the Codespaces host (`/home/codespace`), where `~/.anthropic-work-key` won't exist. Either bootstrap that file in your Codespaces dotfiles flow, or remove `dev.containers.defaultFeatures` from your Settings Sync profile for Codespaces use.
+- **Codespaces:** `${localEnv:HOME}` resolves to the Codespaces host (`/home/codespace`), where `~/.claude-work` won't exist. Either bootstrap it in your Codespaces dotfiles flow, or remove `dev.containers.defaultFeatures` from your Settings Sync profile for Codespaces use.
 
 ## Use manually (no VS Code)
 
-Args, env vars, or a pre-placed token file all work. Pick whichever fits the situation:
+Args or env vars, whichever fits:
 
 ```sh
 git clone https://github.com/hilikliming/dotfiles ~/dotfiles
 
-# Option A: pass everything as args
-~/dotfiles/install.sh \
-  --name "Your Name" \
-  --email "you@example.com" \
-  --anthropic-token "YOUR_OAUTH_TOKEN"
+# Option A: args
+~/dotfiles/install.sh --name "Your Name" --email "you@example.com"
 
 # Option B: env vars
 DOTFILES_GIT_USER_NAME="..." \
 DOTFILES_GIT_USER_EMAIL="..." \
-DOTFILES_ANTHROPIC_OAUTH_TOKEN="..." \
   ~/dotfiles/install.sh
-
-# Option C: place the token file beforehand, then run with no args
-echo 'YOUR_OAUTH_TOKEN' > ~/.anthropic-work-key && chmod 600 ~/.anthropic-work-key
-~/dotfiles/install.sh
 ```
 
-The Claude setup (CLI install + onboarding-skip) fires whenever `~/.anthropic-work-key` ends up non-empty, regardless of which path put it there. Idempotent, safe to re-run.
+The Claude setup (CLI install + onboarding-skip) fires when a work config dir is present, either as the Feature's mount at `/var/claude-work.mount` or as `~/.claude-work`. Outside a devcontainer, log in normally with `claude` and `/login`. Idempotent, safe to re-run.
 
 ## What it does
 
@@ -115,10 +105,10 @@ The Claude setup (CLI install + onboarding-skip) fires whenever `~/.anthropic-wo
 - Drops `.alias` into `$HOME` (kubectl shortcuts, nav helpers, `git` → `gt` routing when Graphite is installed)
 - Maintains a marker-guarded block in `~/.zshrc` (rewritten on each run, so `zshrc.append` updates apply cleanly)
 - Sets `git user.name` / `user.email` *if* provided via arg or env var (otherwise relies on host `~/.gitconfig` copy in devcontainers)
-- When `~/.anthropic-work-key` is present and non-empty:
+- When a work config dir is present (`/var/claude-work.mount` or `~/.claude-work`):
   - Installs `@anthropic-ai/claude-code` via npm (via mise-managed node if needed)
-  - Pre-marks the onboarding wizard complete so the token takes effect immediately
-  - `zshrc.append` auto-exports `CLAUDE_CODE_OAUTH_TOKEN` from the file on every shell start
+  - Pre-marks the onboarding wizard complete so credentials take effect immediately
+  - `zshrc.append` exports `CLAUDE_CONFIG_DIR=$HOME/.claude-work` on every shell start
 - Installs `gh` (GitHub CLI) from the official apt repo when it's missing and `apt-get` is available
 - When `~/.github-work-token` is present and non-empty (via the `github-token` Feature):
   - Bind-mounts the file from host and stages it at `$HOME/.github-work-token` (mode 600, owned by the container user)
@@ -128,7 +118,10 @@ The Claude setup (CLI install + onboarding-skip) fires whenever `~/.anthropic-wo
   - Bind-mounts the file from host and stages it at `$HOME/.graphite-work-token` (mode 600, owned by the container user)
   - Runs `gt auth --token "$(cat ...)"` if `gt` is on PATH (the team's `setup.sh` installs `gt` via mise before this script runs)
 - When `~/.claude-work` exists on the host (via the `claude-work` Feature):
-  - Bind-mounts host `~/.claude-work` into the container and symlinks it at `$HOME/.claude-work`
+  - Bind-mounts host `~/.claude-work` into the container and symlinks it at **both** `$HOME/.claude-work` and `$HOME/.claude`
   - `zshrc.append` exports `CLAUDE_CONFIG_DIR=$HOME/.claude-work` so Claude Code reads/writes the shared config dir
+  - The `$HOME/.claude` link is what makes env-blind launchers work. The VS Code Claude Code panel, tasks, and non-login shells never source `.zshrc`, so they fall back to the default config dir. Before that link existed they found no credentials there and prompted `/login` on every invocation
+  - Credentials live in the mounted `.credentials.json`, so a login on either side of the boundary serves both, and refreshes write through the mount
   - Preferences, global memories, and `settings.json` persist across container rebuilds and stay in sync with the host's Claude Code
+  - **Note:** on macOS the host stores its own credential in the Keychain (namespaced per config dir, e.g. `Claude Code-credentials-<hash>`), not in `.credentials.json`. Linux containers have no Keychain and use the file. So the two sides can hold independent logins that both work; the file is the container's store
   - **Caveat: per-project conversation transcripts and per-project memories do NOT auto-merge across the host/container boundary.** Claude Code scopes them by cwd-derived project path (e.g. host cwd `/Users/jhall` becomes `projects/-Users-jhall/`, container cwd `/workspaces/k-and-e-transaction-management-platform` becomes `projects/-workspaces-k-and-e-.../`). Different folders inside the same `projects/` tree means "resume yesterday's host conversation from inside the container" doesn't just work. Global settings travel, project-scoped state doesn't.
