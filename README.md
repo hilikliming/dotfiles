@@ -149,3 +149,7 @@ The Claude setup (CLI install + onboarding-skip) fires when a work config dir is
   - **TKS keeps nothing under `~/.claude`**, so the `claude-work` mount carries none of it. Only the workspace persists across rebuilds, through its own mount. `~/.tks`, the mise shim, and `~/.config/tks/telemetry.json` are container-local and reinstalled every time
   - Git operations against the `tks-*` source repos go over the forwarded SSH agent, which is SSO-authorized for the TribeAI org. Only the release-asset download needs the PAT
   - Because host and container share one directory, sessions the container agent writes appear in the Mac's Obsidian vault live, with no sync step
+- When the mounted work config dir carries the `deep-security` skill:
+  - Runs that skill's own `ci_install_scanners.sh full` to provision the scanner kit (opengrep, gitleaks, osv-scanner, bandit, checkov; trivy already comes from the project's mise config)
+  - `$HOME/.local/bin` has no volume, so these are wiped on every rebuild. Without this the skill reports 6 of 8 scanners MISSING and every scan comes back DEGRADED until someone reinstalls them by hand
+  - Provisions `uv` globally via mise first, since `bandit` and `checkov` install through `uv tool` and uv otherwise comes only from a project's `.mise.toml`, which does not apply in `~/dotfiles`

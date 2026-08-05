@@ -207,7 +207,38 @@ if [ -d "/var/tks-workspace.mount" ] || [ -d "$HOME/knowledge" ]; then
   fi
 fi
 
-# 10. Default shell → zsh where permissions allow ---------------------------
+# 10. deep-security scanner kit --------------------------------------------
+# The /deep-security skill wants 8 scanners. A devcontainer supplies only trivy
+# (from the project's mise config), and $HOME/.local/bin has no volume, so the
+# rest are wiped on every rebuild and scans come back DEGRADED until someone
+# remembers to reinstall them. The skill ships the Linux installer already; this
+# just calls it, so the kit is present before the first scan rather than after.
+#
+# Prefer the mount over the symlink for the same reason step 5 does: the mount
+# exists from container start, the symlink only after the Feature's postCreate.
+SCANNER_INSTALL=""
+for base in /var/claude-work.mount "$HOME/.claude-work"; do
+  if [ -f "$base/skills/deep-security/scripts/ci_install_scanners.sh" ]; then
+    SCANNER_INSTALL="$base/skills/deep-security/scripts/ci_install_scanners.sh"
+    break
+  fi
+done
+if [ -n "$SCANNER_INSTALL" ]; then
+  # bandit and checkov install through `uv tool`. uv normally comes from a
+  # project's .mise.toml, which does not apply here in ~/dotfiles, so provision
+  # it globally first or those two silently drop out of the kit.
+  if ! runs uv --version && command -v mise >/dev/null 2>&1; then
+    echo "Installing uv globally via mise (needed for the scanner kit)..."
+    mise use -g uv >/dev/null 2>&1 || true
+    eval "$(mise activate bash --shims)" 2>/dev/null || true
+  fi
+  echo "Provisioning the deep-security scanner kit..."
+  # Shipped mode 600, so run it through bash rather than executing it directly.
+  bash "$SCANNER_INSTALL" full \
+    || echo "Warning: scanner kit incomplete; run '/deep-security --setup' from Claude."
+fi
+
+# 11. Default shell → zsh where permissions allow ---------------------------
 if command -v zsh >/dev/null 2>&1; then
   current_shell="$(getent passwd "$USER" 2>/dev/null | cut -d: -f7 || echo "")"
   zsh_path="$(command -v zsh)"
