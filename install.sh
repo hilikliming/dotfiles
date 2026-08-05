@@ -158,12 +158,24 @@ fi
 
 # 8. `gt` auth: Graphite CLI token login -----------------------------------
 # Team `setup.sh` installs `gt` via mise before this script runs, so we just
-# auth here. Skip silently if `gt` or the token file isn't present.
-if [ -s "$HOME/.graphite-work-token" ] && command -v gt >/dev/null 2>&1; then
-  if gt auth --token "$(cat "$HOME/.graphite-work-token")" >/dev/null; then
-    echo "gt: authenticated from ~/.graphite-work-token"
+# auth here. Skip silently if the token file isn't present.
+#
+# gt is supplied by the *project's* .mise.toml, so from ~/dotfiles its shim
+# resolves no version ("mise ERROR No version is set for shim: gt") even though
+# `command -v gt` succeeds. Guarding on existence therefore ran the auth against
+# a shim that cannot execute, and gt was left unauthenticated with only a warning.
+# Run it from inside the workspace, where mise can resolve the version.
+if [ -s "$HOME/.graphite-work-token" ]; then
+  GT_DIR="$PWD"
+  runs gt --version || GT_DIR="$(find /workspaces -maxdepth 2 -name .mise.toml -exec dirname {} \; 2>/dev/null | head -1)"
+  if [ -n "$GT_DIR" ] && (cd "$GT_DIR" && runs gt --version); then
+    if (cd "$GT_DIR" && gt auth --token "$(cat "$HOME/.graphite-work-token")" >/dev/null 2>&1); then
+      echo "gt: authenticated from ~/.graphite-work-token"
+    else
+      echo "Warning: 'gt auth --token' failed; regenerate the Graphite token if it has expired."
+    fi
   else
-    echo "Warning: 'gt auth --token' failed; regenerate the Graphite token if it has expired."
+    echo "Note: gt is not resolvable yet; run 'gt auth --token \"\$(cat ~/.graphite-work-token)\"' inside the repo."
   fi
 fi
 
@@ -173,16 +185,30 @@ fi
 # only the workspace itself persists, via the tks-workspace Feature's bind mount.
 # Gate on that mount so containers without a workspace stay lean.
 #
-# mise first: the K&E image is mise-native, the standalone binary needs no Node,
-# and it leaves ~/.zshrc alone. The official installer is the fallback for images
-# without mise. Both need a GitHub credential to fetch the private release asset,
-# which is why this runs after step 7 rather than beside the Claude setup.
+# The official installer is primary: mise's github backend verifies GitHub
+# artifact attestations, and a fine-grained PAT cannot read that API (403
+# "Resource not accessible by personal access token"), so the mise path fails on
+# every rebuild and buries a real failure in a scary error. mise stays as the
+# fallback for images without gh. Both need a GitHub credential for the private
+# release asset, which is why this runs after step 7.
+#
+# TKS_UPDATE_PROFILE=0: the installer chooses a profile from $SHELL, which is not
+# zsh here, so it would write .bashrc/.profile and leave interactive zsh without
+# the binary. zshrc.append puts ~/.tks/bin on PATH instead.
 if [ -d "/var/tks-workspace.mount" ] || [ -d "$HOME/knowledge" ]; then
+  export PATH="$HOME/.tks/bin:$PATH"
+
   if ! runs tks --version; then
-    if command -v mise >/dev/null 2>&1; then
-      echo "Installing tks via mise..."
-      # mise reads gh's stored token on its own, but pass the PAT explicitly when
-      # we have it: step 7's `gh auth login` is allowed to fail without aborting.
+    if command -v gh >/dev/null 2>&1; then
+      echo "Installing tks via the official installer..."
+      gh api repos/TribeAI/tks-cli/contents/scripts/install.sh \
+        -H "Accept: application/vnd.github.raw" \
+        | TKS_UPDATE_PROFILE=0 bash \
+        || echo "Warning: tks installer failed; trying mise."
+    fi
+
+    if ! runs tks --version && command -v mise >/dev/null 2>&1; then
+      echo "Falling back to mise for tks..."
       if [ -s "$HOME/.github-work-token" ]; then
         MISE_GITHUB_TOKEN="$(cat "$HOME/.github-work-token")" \
           mise use -g "github:TribeAI/tks-cli@latest" || true
@@ -191,17 +217,10 @@ if [ -d "/var/tks-workspace.mount" ] || [ -d "$HOME/knowledge" ]; then
       fi
       eval "$(mise activate bash --shims)" 2>/dev/null || true
     fi
-
-    if ! runs tks --version && command -v gh >/dev/null 2>&1; then
-      echo "mise install unavailable; falling back to the official tks installer..."
-      gh api repos/TribeAI/tks-cli/contents/scripts/install.sh \
-        -H "Accept: application/vnd.github.raw" | bash \
-        || echo "Warning: tks install failed (see the TribeAI/tks-cli README)."
-    fi
   fi
 
   if runs tks --version; then
-    echo "TKS: $(tks --version 2>/dev/null || echo installed), workspace at ~/knowledge"
+    echo "TKS: $(tks --version 2>/dev/null), workspace at ~/knowledge"
   else
     echo "Warning: workspace is mounted but tks is not installed; install it manually."
   fi
