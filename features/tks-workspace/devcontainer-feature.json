@@ -1,0 +1,14 @@
+{
+  "name": "TKS Workspace Mount",
+  "id": "tks-workspace",
+  "version": "1.0.0",
+  "description": "Bind-mounts the host TKS workspace (~/Code/knowledge) into the container and symlinks it at $HOME/knowledge, so the container agent and host Obsidian read and write the same brains. TKS stores nothing under ~/.claude, so the claude-work Feature does not carry the workspace across: without this mount a container-side workspace would be a separate, Obsidian-invisible copy. Paired with dotfiles install.sh, which installs the tks CLI whenever this mount is present. Mount target is under /var to avoid being shadowed by /tmp tmpfs overlays (e.g., from docker-in-docker).",
+  "mounts": [
+    {
+      "source": "${localEnv:HOME}/Code/knowledge",
+      "target": "/var/tks-workspace.mount",
+      "type": "bind"
+    }
+  ],
+  "postCreateCommand": "/usr/local/share/tks-workspace/install-tks-workspace.sh"
+}

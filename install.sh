@@ -5,10 +5,11 @@
 # Usage:
 #   install.sh
 #   install.sh --name "..." --email "..."
-#   install.sh --name "..." --email "..." --anthropic-token "..."
 #
-# Env-var fallbacks: DOTFILES_GIT_USER_NAME, DOTFILES_GIT_USER_EMAIL,
-#                    DOTFILES_ANTHROPIC_OAUTH_TOKEN
+# Env-var fallbacks: DOTFILES_GIT_USER_NAME, DOTFILES_GIT_USER_EMAIL
+#
+# Claude Code auth needs no flag: the "claude-work" Feature mounts the host's
+# ~/.claude-work (which holds .credentials.json) and links it into place.
 set -euo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
@@ -19,20 +20,25 @@ if command -v mise >/dev/null 2>&1; then
   eval "$(mise activate bash --shims)" 2>/dev/null || true
 fi
 
+# Liveness test, used instead of `command -v` for mise-managed tools.
+# /mise-data is a persisted volume but ~/.config/mise/config.toml is not, so after
+# a rebuild a shim is still on PATH while resolving no version: `command -v uv`
+# succeeds and `uv --version` fails with "No version is set for shim". Guarding on
+# existence would skip the reinstall and leave a tool that cannot run.
+runs() { "$@" >/dev/null 2>&1; }
+
 # Args -----------------------------------------------------------------------
-NAME=""; EMAIL=""; CLAUDE_TOKEN=""
+NAME=""; EMAIL=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --name)             NAME="$2";         shift 2 ;;
     --email)            EMAIL="$2";        shift 2 ;;
-    --anthropic-token)  CLAUDE_TOKEN="$2"; shift 2 ;;
     -h|--help) grep '^#' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "Unknown arg: $1" >&2; exit 1 ;;
   esac
 done
 NAME="${NAME:-${DOTFILES_GIT_USER_NAME:-}}"
 EMAIL="${EMAIL:-${DOTFILES_GIT_USER_EMAIL:-}}"
-CLAUDE_TOKEN="${CLAUDE_TOKEN:-${DOTFILES_ANTHROPIC_OAUTH_TOKEN:-}}"
 
 # 1. oh-my-zsh (unattended; preserves existing .zshrc) -----------------------
 if [ ! -d "$HOME/.oh-my-zsh" ]; then
@@ -42,6 +48,13 @@ if [ ! -d "$HOME/.oh-my-zsh" ]; then
 fi
 
 # 2. Drop .alias into $HOME -------------------------------------------------
+# Back up a differing existing file rather than silently clobbering it. The
+# Mac's ~/.alias carries Claude work/personal profile aliases that are
+# deliberately not in this repo (they are macOS-keychain specific).
+if [ -f "$HOME/.alias" ] && ! cmp -s "$DIR/.alias" "$HOME/.alias"; then
+  cp -p "$HOME/.alias" "$HOME/.alias.dotfiles-backup.$(date +%s)"
+  echo "Backed up differing ~/.alias before overwriting."
+fi
 cp -f "$DIR/.alias" "$HOME/.alias"
 
 # 3. .zshrc marker block — rewrite each run so updates to zshrc.append apply -
@@ -64,16 +77,15 @@ if [ -n "$NAME" ] && [ -n "$EMAIL" ]; then
 fi
 
 # 5. Claude Code -----------------------------------------------------------
-# Token sources (any one is enough; all converge on the same setup below):
-#   - --anthropic-token CLI arg / DOTFILES_ANTHROPIC_OAUTH_TOKEN env var  (write file)
-#   - "anthropic-token" Dev Container Feature                              (file pre-mounted)
-#   - manual paste into $HOME/.anthropic-work-key                          (user-written)
-# zshrc.append exports CLAUDE_CODE_OAUTH_TOKEN from the file on shell start.
-if [ -n "$CLAUDE_TOKEN" ]; then
-  (umask 077; printf '%s\n' "$CLAUDE_TOKEN" > "$HOME/.anthropic-work-key")
-fi
-
-if [ -s "$HOME/.anthropic-work-key" ]; then
+# No token injection. Claude Code >= 2.1.197 keeps credentials per config dir,
+# so the container authenticates from the .credentials.json inside the mounted
+# work config dir. The "claude-work" Feature bind-mounts it and symlinks it to
+# both $HOME/.claude-work and $HOME/.claude.
+#
+# Gate on the mount rather than the symlink: the mount exists from container
+# start, whereas the symlink is created by the Feature's postCreateCommand,
+# whose ordering against the VS Code dotfiles flow is not guaranteed.
+if [ -d "/var/claude-work.mount" ] || [ -d "$HOME/.claude-work" ]; then
   if ! command -v claude >/dev/null 2>&1; then
     # If no npm and mise is present, install node globally via mise so npm is on
     # PATH regardless of cwd. Per-repo `.mise.toml` only activates inside that repo,
@@ -89,17 +101,18 @@ if [ -s "$HOME/.anthropic-work-key" ]; then
         || sudo -E env "PATH=$PATH" npm install -g @anthropic-ai/claude-code \
         || echo "Warning: claude install failed (try: 'mise use -g node@lts && npm i -g @anthropic-ai/claude-code')"
     else
-      echo "Note: no npm available — token saved to ~/.anthropic-work-key; install claude manually."
+      echo "Note: no npm available; install claude manually."
     fi
   fi
 
-  # Skip first-run onboarding wizard. Marker is ~/.claude.json (top-level home dir),
-  # not ~/.claude/.claude.json — the ~/.claude/ dir holds settings.json, backups/, etc.
-  mkdir -p "$HOME/.claude"
+  # Skip first-run onboarding wizard. Marker is ~/.claude.json (top-level home
+  # dir), not ~/.claude/.claude.json. Deliberately no 'mkdir -p $HOME/.claude'
+  # here: that dir is a symlink to the mount, and creating it as a real dir
+  # first would just force the Feature's helper to move it aside.
   [ -f "$HOME/.claude.json" ] || \
     echo '{"hasCompletedOnboarding": true}' > "$HOME/.claude.json"
 
-  echo "Claude Code: token at ~/.anthropic-work-key (600), auto-exported via .zshrc"
+  echo "Claude Code: auth from the mounted work config dir (no token injected)."
 fi
 
 # 6. GitHub CLI (`gh`): install via official apt repo ----------------------
@@ -154,7 +167,78 @@ if [ -s "$HOME/.graphite-work-token" ] && command -v gt >/dev/null 2>&1; then
   fi
 fi
 
-# 9. Default shell → zsh where permissions allow ----------------------------
+# 9. TKS CLI: install when a knowledge workspace is mounted ----------------
+# TKS keeps nothing under ~/.claude, so the claude-work mount does not carry it.
+# The CLI lives in the container filesystem and is reinstalled on each rebuild;
+# only the workspace itself persists, via the tks-workspace Feature's bind mount.
+# Gate on that mount so containers without a workspace stay lean.
+#
+# mise first: the K&E image is mise-native, the standalone binary needs no Node,
+# and it leaves ~/.zshrc alone. The official installer is the fallback for images
+# without mise. Both need a GitHub credential to fetch the private release asset,
+# which is why this runs after step 7 rather than beside the Claude setup.
+if [ -d "/var/tks-workspace.mount" ] || [ -d "$HOME/knowledge" ]; then
+  if ! runs tks --version; then
+    if command -v mise >/dev/null 2>&1; then
+      echo "Installing tks via mise..."
+      # mise reads gh's stored token on its own, but pass the PAT explicitly when
+      # we have it: step 7's `gh auth login` is allowed to fail without aborting.
+      if [ -s "$HOME/.github-work-token" ]; then
+        MISE_GITHUB_TOKEN="$(cat "$HOME/.github-work-token")" \
+          mise use -g "github:TribeAI/tks-cli@latest" || true
+      else
+        mise use -g "github:TribeAI/tks-cli@latest" || true
+      fi
+      eval "$(mise activate bash --shims)" 2>/dev/null || true
+    fi
+
+    if ! runs tks --version && command -v gh >/dev/null 2>&1; then
+      echo "mise install unavailable; falling back to the official tks installer..."
+      gh api repos/TribeAI/tks-cli/contents/scripts/install.sh \
+        -H "Accept: application/vnd.github.raw" | bash \
+        || echo "Warning: tks install failed (see the TribeAI/tks-cli README)."
+    fi
+  fi
+
+  if runs tks --version; then
+    echo "TKS: $(tks --version 2>/dev/null || echo installed), workspace at ~/knowledge"
+  else
+    echo "Warning: workspace is mounted but tks is not installed; install it manually."
+  fi
+fi
+
+# 10. deep-security scanner kit --------------------------------------------
+# The /deep-security skill wants 8 scanners. A devcontainer supplies only trivy
+# (from the project's mise config), and $HOME/.local/bin has no volume, so the
+# rest are wiped on every rebuild and scans come back DEGRADED until someone
+# remembers to reinstall them. The skill ships the Linux installer already; this
+# just calls it, so the kit is present before the first scan rather than after.
+#
+# Prefer the mount over the symlink for the same reason step 5 does: the mount
+# exists from container start, the symlink only after the Feature's postCreate.
+SCANNER_INSTALL=""
+for base in /var/claude-work.mount "$HOME/.claude-work"; do
+  if [ -f "$base/skills/deep-security/scripts/ci_install_scanners.sh" ]; then
+    SCANNER_INSTALL="$base/skills/deep-security/scripts/ci_install_scanners.sh"
+    break
+  fi
+done
+if [ -n "$SCANNER_INSTALL" ]; then
+  # bandit and checkov install through `uv tool`. uv normally comes from a
+  # project's .mise.toml, which does not apply here in ~/dotfiles, so provision
+  # it globally first or those two silently drop out of the kit.
+  if ! runs uv --version && command -v mise >/dev/null 2>&1; then
+    echo "Installing uv globally via mise (needed for the scanner kit)..."
+    mise use -g uv >/dev/null 2>&1 || true
+    eval "$(mise activate bash --shims)" 2>/dev/null || true
+  fi
+  echo "Provisioning the deep-security scanner kit..."
+  # Shipped mode 600, so run it through bash rather than executing it directly.
+  bash "$SCANNER_INSTALL" full \
+    || echo "Warning: scanner kit incomplete; run '/deep-security --setup' from Claude."
+fi
+
+# 11. Default shell → zsh where permissions allow ---------------------------
 if command -v zsh >/dev/null 2>&1; then
   current_shell="$(getent passwd "$USER" 2>/dev/null | cut -d: -f7 || echo "")"
   zsh_path="$(command -v zsh)"
