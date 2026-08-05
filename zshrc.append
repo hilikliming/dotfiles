@@ -10,6 +10,12 @@
 # find credentials.
 [ -d "$HOME/.claude-work" ] && export CLAUDE_CONFIG_DIR="$HOME/.claude-work"
 
+# The TKS installer picks which profile to edit from $SHELL, which is not zsh
+# during the VS Code dotfiles flow, so its PATH block lands in .bashrc/.profile
+# and an interactive zsh never sees the binary. install.sh passes
+# TKS_UPDATE_PROFILE=0 so it writes no profiles at all; PATH is set here instead.
+[ -d "$HOME/.tks/bin" ] && export PATH="$HOME/.tks/bin:$PATH"
+
 # Override the base image's minimalist ZSH_THEME (e.g. devcontainers/codespaces
 # images set ZSH_THEME="devcontainers" which omits git status). Re-source the
 # theme we actually want, after oh-my-zsh has loaded.
