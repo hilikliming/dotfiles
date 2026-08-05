@@ -20,6 +20,13 @@ if command -v mise >/dev/null 2>&1; then
   eval "$(mise activate bash --shims)" 2>/dev/null || true
 fi
 
+# Liveness test, used instead of `command -v` for mise-managed tools.
+# /mise-data is a persisted volume but ~/.config/mise/config.toml is not, so after
+# a rebuild a shim is still on PATH while resolving no version: `command -v uv`
+# succeeds and `uv --version` fails with "No version is set for shim". Guarding on
+# existence would skip the reinstall and leave a tool that cannot run.
+runs() { "$@" >/dev/null 2>&1; }
+
 # Args -----------------------------------------------------------------------
 NAME=""; EMAIL=""
 while [[ $# -gt 0 ]]; do
@@ -160,7 +167,47 @@ if [ -s "$HOME/.graphite-work-token" ] && command -v gt >/dev/null 2>&1; then
   fi
 fi
 
-# 9. Default shell → zsh where permissions allow ----------------------------
+# 9. TKS CLI: install when a knowledge workspace is mounted ----------------
+# TKS keeps nothing under ~/.claude, so the claude-work mount does not carry it.
+# The CLI lives in the container filesystem and is reinstalled on each rebuild;
+# only the workspace itself persists, via the tks-workspace Feature's bind mount.
+# Gate on that mount so containers without a workspace stay lean.
+#
+# mise first: the K&E image is mise-native, the standalone binary needs no Node,
+# and it leaves ~/.zshrc alone. The official installer is the fallback for images
+# without mise. Both need a GitHub credential to fetch the private release asset,
+# which is why this runs after step 7 rather than beside the Claude setup.
+if [ -d "/var/tks-workspace.mount" ] || [ -d "$HOME/knowledge" ]; then
+  if ! runs tks --version; then
+    if command -v mise >/dev/null 2>&1; then
+      echo "Installing tks via mise..."
+      # mise reads gh's stored token on its own, but pass the PAT explicitly when
+      # we have it: step 7's `gh auth login` is allowed to fail without aborting.
+      if [ -s "$HOME/.github-work-token" ]; then
+        MISE_GITHUB_TOKEN="$(cat "$HOME/.github-work-token")" \
+          mise use -g "github:TribeAI/tks-cli@latest" || true
+      else
+        mise use -g "github:TribeAI/tks-cli@latest" || true
+      fi
+      eval "$(mise activate bash --shims)" 2>/dev/null || true
+    fi
+
+    if ! runs tks --version && command -v gh >/dev/null 2>&1; then
+      echo "mise install unavailable; falling back to the official tks installer..."
+      gh api repos/TribeAI/tks-cli/contents/scripts/install.sh \
+        -H "Accept: application/vnd.github.raw" | bash \
+        || echo "Warning: tks install failed (see the TribeAI/tks-cli README)."
+    fi
+  fi
+
+  if runs tks --version; then
+    echo "TKS: $(tks --version 2>/dev/null || echo installed), workspace at ~/knowledge"
+  else
+    echo "Warning: workspace is mounted but tks is not installed; install it manually."
+  fi
+fi
+
+# 10. Default shell → zsh where permissions allow ---------------------------
 if command -v zsh >/dev/null 2>&1; then
   current_shell="$(getent passwd "$USER" 2>/dev/null | cut -d: -f7 || echo "")"
   zsh_path="$(command -v zsh)"

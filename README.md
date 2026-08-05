@@ -15,7 +15,8 @@ Two pieces of plumbing in your VS Code **user** settings (`Cmd+,` → "Open Sett
 "dev.containers.defaultFeatures": {
     "ghcr.io/hilikliming/dotfiles/claude-work:1": {},
     "ghcr.io/hilikliming/dotfiles/github-token:1": {},
-    "ghcr.io/hilikliming/dotfiles/graphite-token:1": {}
+    "ghcr.io/hilikliming/dotfiles/graphite-token:1": {},
+    "ghcr.io/hilikliming/dotfiles/tks-workspace:1": {}
 },
 "terminal.integrated.defaultProfile.linux": "zsh"
 ```
@@ -52,7 +53,22 @@ echo 'YOUR_GITHUB_PAT_HERE' > ~/.github-work-token
 #    where Graphite is already logged in, or from the Graphite web UI.
 umask 077
 echo 'YOUR_GRAPHITE_TOKEN_HERE' > ~/.graphite-work-token
+
+# 5. (Optional) TKS. Install the CLI on the Mac, then create the workspace
+#    the tks-workspace Feature mounts. Bare `gh` here uses the keychain OAuth
+#    token, which is SAML-blocked for the TribeAI org; the fine-grained PAT
+#    from step 3 is not, so pass it explicitly.
+export GH_TOKEN="$(cat ~/.github-work-token)"
+gh api repos/TribeAI/tks-cli/contents/scripts/install.sh \
+  -H "Accept: application/vnd.github.raw" | bash
+tks init ~/Code/knowledge
 ```
+
+> **Keep the workspace out of `~/PersonalCode/`.** The Mac's `~/.gitconfig` has
+> `includeIf "gitdir:~/PersonalCode/"` pointing at a personal email, so brains
+> created under there would push commits to TribeAI-org repos under the wrong
+> identity. Anywhere else inherits the work identity. The container is immune
+> either way: that `includeIf` path never resolves inside it.
 
 > **Token rotation:**
 > - **Anthropic:** nothing to rotate. The container reads the same `.credentials.json` as the host through the bind mount, and Claude Code refreshes it in place using the stored refresh token. When the refresh token itself finally lapses, `/login` once (host or container, either writes through the mount) and every container picks it up live. This is the whole reason the old `anthropic-token` Feature was retired: an injected `CLAUDE_CODE_OAUTH_TOKEN` is a bare access token with no refresh token, so it could not renew, and it silently outranked the good credential whenever both were present.
@@ -63,6 +79,7 @@ That's it. Every devcontainer you open from then on will:
 1. Auto-apply the `claude-work` Feature, which bind-mounts `~/.claude-work` from your Mac and symlinks it at both `$HOME/.claude-work` and `$HOME/.claude`. Credentials come from the `.credentials.json` inside it.
 2. Run `install.sh` (no args), which sets up oh-my-zsh / `.alias` / `.zshrc`, then notices the work config mount and installs `@anthropic-ai/claude-code` plus the onboarding-skip marker.
 3. Export `CLAUDE_CONFIG_DIR=$HOME/.claude-work` on every shell start (via `zshrc.append`). The `$HOME/.claude` symlink covers launchers that never source `.zshrc`.
+4. Auto-apply the `tks-workspace` Feature, which bind-mounts `~/Code/knowledge` and symlinks it at `$HOME/knowledge`. `install.sh` then installs the `tks` CLI so the container agent can run the verbs, not just read the files.
 
 Git identity is handled separately by VS Code's automatic copy of your host `~/.gitconfig` (`dev.containers.copyGitConfig`, default on).
 
@@ -72,7 +89,7 @@ Because VS Code's installCommand parser doesn't handle arguments. It treats the 
 
 ### Caveats
 
-- **Host files must exist** before opening a devcontainer. If `~/.claude-work`, `~/.github-work-token`, or `~/.graphite-work-token` is missing on the Mac while the corresponding Feature is enabled, the container will fail to start with `bind source path does not exist` (the dev containers spec doesn't yet support optional mounts, see [devcontainers/spec#132](https://github.com/devcontainers/spec/issues/132)). The bootstrap above creates all three; just don't delete them. If you don't want one of them, drop the matching entry from `dev.containers.defaultFeatures`.
+- **Host files must exist** before opening a devcontainer. If `~/.claude-work`, `~/.github-work-token`, `~/.graphite-work-token`, or `~/Code/knowledge` is missing on the Mac while the corresponding Feature is enabled, the container will fail to start with `bind source path does not exist` (the dev containers spec doesn't yet support optional mounts, see [devcontainers/spec#132](https://github.com/devcontainers/spec/issues/132)). The bootstrap above creates all four; just don't delete them. If you don't want one of them, drop the matching entry from `dev.containers.defaultFeatures`. This bites hardest with `tks-workspace`: enable it before running `tks init` and *every* devcontainer stops opening, not just the one you wanted TKS in.
 - **First publish of the Feature is private on GHCR.** After the GitHub Action publishes for the first time, visit `github.com/users/hilikliming/packages/container/dotfiles%2Fclaude-work/settings` and set visibility to Public so the devcontainer CLI can pull without auth.
 - **`devcontainer-lock.json` may pin the Feature reference** into team repos ([microsoft/vscode-remote-release#11616](https://github.com/microsoft/vscode-remote-release/issues/11616)). To avoid accidentally committing it, the global gitignore covers it:
   ```sh
@@ -125,3 +142,10 @@ The Claude setup (CLI install + onboarding-skip) fires when a work config dir is
   - Preferences, global memories, and `settings.json` persist across container rebuilds and stay in sync with the host's Claude Code
   - **Note:** on macOS the host stores its own credential in the Keychain (namespaced per config dir, e.g. `Claude Code-credentials-<hash>`), not in `.credentials.json`. Linux containers have no Keychain and use the file. So the two sides can hold independent logins that both work; the file is the container's store
   - **Caveat: per-project conversation transcripts and per-project memories do NOT auto-merge across the host/container boundary.** Claude Code scopes them by cwd-derived project path (e.g. host cwd `/Users/jhall` becomes `projects/-Users-jhall/`, container cwd `/workspaces/k-and-e-transaction-management-platform` becomes `projects/-workspaces-k-and-e-.../`). Different folders inside the same `projects/` tree means "resume yesterday's host conversation from inside the container" doesn't just work. Global settings travel, project-scoped state doesn't.
+- When `~/Code/knowledge` exists on the host (via the `tks-workspace` Feature):
+  - Bind-mounts it into the container and symlinks it at `$HOME/knowledge`. One link is enough, unlike `claude-work`: `tks` finds a workspace by walking up from cwd for `_workspace/manifest.yaml`, so nothing depends on a fixed `$HOME` path
+  - Installs the `tks` CLI with `mise use -g "github:TribeAI/tks-cli@latest"` (standalone binary, no Node at runtime, no `~/.zshrc` edit), falling back to the official `gh`-piped installer on images without mise
+  - Runs *after* the `gh` login step, because both install paths fetch a private release asset. The PAT is passed as `MISE_GITHUB_TOKEN` explicitly rather than relying on mise reading `gh`'s stored token, since that login is allowed to fail non-fatally
+  - **TKS keeps nothing under `~/.claude`**, so the `claude-work` mount carries none of it. Only the workspace persists across rebuilds, through its own mount. `~/.tks`, the mise shim, and `~/.config/tks/telemetry.json` are container-local and reinstalled every time
+  - Git operations against the `tks-*` source repos go over the forwarded SSH agent, which is SSO-authorized for the TribeAI org. Only the release-asset download needs the PAT
+  - Because host and container share one directory, sessions the container agent writes appear in the Mac's Obsidian vault live, with no sync step
