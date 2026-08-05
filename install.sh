@@ -158,12 +158,24 @@ fi
 
 # 8. `gt` auth: Graphite CLI token login -----------------------------------
 # Team `setup.sh` installs `gt` via mise before this script runs, so we just
-# auth here. Skip silently if `gt` or the token file isn't present.
-if [ -s "$HOME/.graphite-work-token" ] && command -v gt >/dev/null 2>&1; then
-  if gt auth --token "$(cat "$HOME/.graphite-work-token")" >/dev/null; then
-    echo "gt: authenticated from ~/.graphite-work-token"
+# auth here. Skip silently if the token file isn't present.
+#
+# gt is supplied by the *project's* .mise.toml, so from ~/dotfiles its shim
+# resolves no version ("mise ERROR No version is set for shim: gt") even though
+# `command -v gt` succeeds. Guarding on existence therefore ran the auth against
+# a shim that cannot execute, and gt was left unauthenticated with only a warning.
+# Run it from inside the workspace, where mise can resolve the version.
+if [ -s "$HOME/.graphite-work-token" ]; then
+  GT_DIR="$PWD"
+  runs gt --version || GT_DIR="$(find /workspaces -maxdepth 2 -name .mise.toml -exec dirname {} \; 2>/dev/null | head -1)"
+  if [ -n "$GT_DIR" ] && (cd "$GT_DIR" && runs gt --version); then
+    if (cd "$GT_DIR" && gt auth --token "$(cat "$HOME/.graphite-work-token")" >/dev/null 2>&1); then
+      echo "gt: authenticated from ~/.graphite-work-token"
+    else
+      echo "Warning: 'gt auth --token' failed; regenerate the Graphite token if it has expired."
+    fi
   else
-    echo "Warning: 'gt auth --token' failed; regenerate the Graphite token if it has expired."
+    echo "Note: gt is not resolvable yet; run 'gt auth --token \"\$(cat ~/.graphite-work-token)\"' inside the repo."
   fi
 fi
 
