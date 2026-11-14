@@ -257,7 +257,18 @@ if [ -n "$SCANNER_INSTALL" ]; then
     || echo "Warning: scanner kit incomplete; run '/deep-security --setup' from Claude."
 fi
 
-# 11. Default shell → zsh where permissions allow ---------------------------
+# 11. herdr (agent multiplexer) + jq --------------------------------------
+# Global via mise so both resolve outside a project; the herdr-dispatch skills need jq.
+# No `herdr integration install claude`: its absolute hook path breaks the Mac's shared settings.json.
+if command -v mise >/dev/null 2>&1; then
+  runs herdr --version || mise use -g herdr@0.9.5 >/dev/null 2>&1 \
+    || echo "Warning: herdr install failed; run 'mise use -g herdr@0.9.5' manually."
+  runs jq --version || mise use -g jq >/dev/null 2>&1 \
+    || echo "Warning: jq install failed; run 'mise use -g jq' manually."
+  eval "$(mise activate bash --shims)" 2>/dev/null || true
+fi
+
+# 12. Default shell → zsh where permissions allow ---------------------------
 if command -v zsh >/dev/null 2>&1; then
   current_shell="$(getent passwd "$USER" 2>/dev/null | cut -d: -f7 || echo "")"
   zsh_path="$(command -v zsh)"
